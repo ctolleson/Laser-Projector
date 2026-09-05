@@ -10,6 +10,20 @@ import ilda
 import strokefont as sf
 from ilda import FrameBuilder, Frame, RED, GREEN, CYAN, BLUE, MAGENTA, WHITE, YELLOW
 
+# --- measured projector profile (from the clock-ladder video, IMG_4646.MOV) --
+# Frame time fits  t = OVERHEAD + points/POINT_RATE  across 400..3200 pts/frame.
+# This head is far slower than the 20-30 kpps typical of the format, so frames
+# must be sized against these numbers, not against the reference content.
+POINT_RATE = 16000   # points/sec
+OVERHEAD = 0.0063    # sec of fixed cost per frame
+BUDGET = 540         # points/frame -> ~25 Hz, the flicker-free working point
+
+
+def refresh_hz(points):
+    """Refresh this projector achieves for a frame of `points` points."""
+    return 1.0 / (OVERHEAD + points / POINT_RATE)
+
+
 R = 26000            # keep well inside +/-32767 so nothing clips
 TEXT_W = 46000       # target width of the widest text line
 FOCAL = 62000        # perspective distance for Y-axis rotation
@@ -86,7 +100,7 @@ def timing_test(nframes=60, ticks=12, label=None):
 
 
 # ----------------------------------------------------------- starfield ------
-def starfield(nframes=120, nstars=36, seed=3):
+def starfield(nframes=120, nstars=20, seed=3):
     """Warp-speed starfield: stars stream outward from the centre.
 
     Each star is a streak, not a dot -- a laser renders a dot as a stationary
@@ -110,10 +124,10 @@ def starfield(nframes=120, nstars=36, seed=3):
     (where it is leaving the frame) to the centre, so the projector's repeat
     count produces no visible jump.
 
-    `nstars` is the point-budget dial: each star costs ~26 points, and
-    points/frame x fps must stay under the projector's point rate. 36 stars is
-    ~960 points, i.e. ~19 kpps at 20 fps -- safe on a 20 kpps head. Raise it if
-    yours scans faster.
+    `nstars` is the point-budget dial: each star costs ~26 points. At 20 stars
+    a frame is ~540 points, which this projector refreshes at ~25 Hz. The
+    earlier 36 stars measured out at ~16 Hz -- visibly flickering. Raise it only
+    against a measured POINT_RATE, not against the format's nominal 20-30 kpps.
     """
     rnd = random.Random(seed)
     GOLDEN = math.pi * (3 - math.sqrt(5))          # ~137.5 deg
@@ -207,8 +221,8 @@ def text_reveal(lines=('PRODUCT', 'SECURITY', 'GUILD'), nframes=148,
 
     frames = []
     for f in range(nframes):
-        fb = FrameBuilder(max_step=1100, dwell_start=4, dwell_end=3,
-                          dwell_blank=3)
+        fb = FrameBuilder(max_step=1700, dwell_start=3, dwell_end=2,
+                          dwell_blank=2)
         for i, strokes in enumerate(geom):
             a = angle(i, f)
             ca, sa = math.cos(a), math.sin(a)
@@ -255,8 +269,15 @@ def pad_to(frame, n):
     return ilda.Frame(pts, frame.name, frame.company)
 
 
-def pointrate_ladder(counts=(400, 800, 1600, 3200, 6400)):
+def pointrate_ladder(counts=(300, 400, 500, 650, 900)):
     """Clock-hand files at increasing points/frame, for finding the point rate.
+
+    The first sweep (400..6400) established the shape: this head is point-limited
+    across the whole range, with no flat region, at roughly 16 kpps. These counts
+    bracket the usable working range instead, to pin POINT_RATE and OVERHEAD
+    down where frames are actually authored. Heavy steps also measure badly --
+    at 6400 points the lit burst is such a small share of the frame that a
+    camera rarely catches it.
 
     Each file is the same one-revolution-per-60-frames clock, padded to a
     different point count. Time one revolution of each: while the projector has
@@ -276,9 +297,50 @@ def pointrate_ladder(counts=(400, 800, 1600, 3200, 6400)):
     return out
 
 
+# ------------------------------------------------------- palette chart ------
+def palette_chart(per_group=8, hold=40):
+    """Swatches for all 64 palette indices, labelled, 8 at a time.
+
+    The ILDA standard palette says index 56 is white and 40 is blue. On this
+    projector 56 comes out magenta and 40 comes out purple, while 0 (red) and
+    31 (cyan) look correct -- so its table is NOT the standard one, and colours
+    picked from the spec will not be the colours on the wall.
+
+    Film this, read off what each numbered bar actually looks like, and the
+    result is the projector's real palette. Then author against that.
+    """
+    frames = []
+    for g in range(64 // per_group):
+        base = g * per_group
+        made = []
+        for row in range(per_group):
+            idx = base + row
+            y = R * 0.72 - row * (R * 1.5 / per_group)
+            fb_strokes = []
+            # the swatch: a bold bar drawn in the index under test
+            fb_strokes.append(([(-R * 0.30, y), (R * 0.62, y)], idx))
+            # its number, drawn in a colour we already trust (red reads true).
+            # Glyph height is 7u and must clear the row pitch, or the labels
+            # collide and the chart is unreadable.
+            u = (R * 1.5 / per_group) / 7.0 * 0.68
+            for s in sf.strokes(f"{idx:02d}"):
+                fb_strokes.append(([(x * u - R * 0.86, y + (yy - 3.5) * u)
+                                    for x, yy in s], RED))
+            made.append(fb_strokes)
+        for _ in range(hold):
+            fb = FrameBuilder(max_step=2600, dwell_start=3, dwell_end=2,
+                              dwell_blank=2)
+            for row in made:
+                for pts, col in row:
+                    fb.polyline(pts, color=col)
+            frames.append(fb.build())
+    return frames
+
+
 if __name__ == '__main__':
     for fn, nm in ((cube, 'cube'), (lissajous, 'lissajous'),
                    (starfield, 'starfield'), (text_reveal, 'psg'),
+                   (palette_chart, 'palette'),
                    (timing_test, 'timing_test')):
         fr = fn()
         n = ilda.write(f'{nm}.ild', fr, name=nm.upper()[:8], company='CLAUDE',

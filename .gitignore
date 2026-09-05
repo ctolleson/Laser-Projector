@@ -8,3 +8,11 @@ out/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Staged SD-card image, rebuilt by make_demo.py + the staging step
+/card/
+
+# Raw projector recordings - large binaries, kept locally
+*.MOV
+*.mov
+*.mp4
