@@ -14,9 +14,18 @@ from ilda import FrameBuilder, Frame, RED, GREEN, CYAN, BLUE, MAGENTA, WHITE, YE
 # Frame time fits  t = OVERHEAD + points/POINT_RATE  across 400..3200 pts/frame.
 # This head is far slower than the 20-30 kpps typical of the format, so frames
 # must be sized against these numbers, not against the reference content.
-POINT_RATE = 16000   # points/sec
-OVERHEAD = 0.0063    # sec of fixed cost per frame
-BUDGET = 540         # points/frame -> ~25 Hz, the flicker-free working point
+POINT_RATE = 15040   # points/sec  (refit over 300-900 pts/frame, IMG_4653)
+OVERHEAD = 0.00492   # sec of fixed cost per frame
+BUDGET = 530         # points/frame -> ~25 Hz, the flicker-free working point
+
+# Refit predicts the measured refresh to within 3% across 300-900 points/frame
+# (rate300: 39.93 Hz measured vs 39.92 predicted). The earlier 16000/6.3ms came
+# from a sweep that ran out to 6400 points, where the lit burst is too brief for
+# a camera to catch reliably; these numbers come from the range frames are
+# actually authored in.
+#
+# Note POINT_RATE lands within 0.3% of 15000, and every playlist entry in that
+# recording carried field 2 = 15. See kpps_test().
 
 
 def refresh_hz(points):
@@ -616,6 +625,39 @@ def raccoon(nframes=210, scale=235.0):
     return frames
 
 
+# --------------------------------------------- playlist field 2 experiment ---
+def kpps_test(values=(8, 12, 16, 20, 24, 30), points=500):
+    """Identical clocks stamped with, and listed under, different field-2 values.
+
+    Field 3 of a playlist line is now confirmed to be a repeat count. Field 2 is
+    still open -- but it is NOT frames per second: every entry in the last test
+    said 15 while the projector ran psg at 20.9 Hz and rate300 at 39.9 Hz, both
+    exactly as its point rate predicts. It ignored the number completely as a
+    frame rate.
+
+    The live hypothesis is that field 2 sets the SCAN RATE in kpps. The measured
+    point rate came out at 15,040 pts/sec against a playlist that said 15 -- a
+    0.3% match that is hard to read as coincidence. The original factory
+    Picture.prg used 8/10/15/18/20, all plausible kpps ratings, and Picture.bac
+    listed one file four times at different values, which looks exactly like
+    somebody sweeping this setting.
+
+    Every file here is the same clock padded to the same point count, so scan
+    rate is the only variable. Each is stamped with the value its playlist line
+    carries. If the hypothesis holds, refresh should track field 2:
+
+        8 -> 14.7 Hz   12 -> 21.3 Hz   16 -> 27.4 Hz
+       20 -> 33.5 Hz   24 -> 39.0 Hz   30 -> 45.6 Hz
+
+    If field 2 is ignored instead, all six run at the same ~26.6 Hz.
+    """
+    out = {}
+    for v in values:
+        base = timing_test(ticks=4, label=str(v))
+        out[v] = [pad_to(f, points) for f in base]
+    return out
+
+
 if __name__ == '__main__':
     for fn, nm in ((cube, 'cube'), (lissajous, 'lissajous'),
                    (starfield, 'starfield'), (text_show, 'psg'),
@@ -627,6 +669,14 @@ if __name__ == '__main__':
         pts = [len(x) for x in fr]
         print(f"{nm+'.ild':18s} {len(fr):3d} frames  "
               f"{min(pts)}-{max(pts)} pts/frame  {n} bytes")
+
+    print()
+    for v, fr in sorted(kpps_test().items()):
+        nm = f'k{v:02d}'
+        ilda.write(f'{nm}.ild', fr, name=nm.upper()[:8], company='CLAUDE',
+                   last_flag=True)
+        print(f"{nm+'.ild':18s} {len(fr):3d} frames  {len(fr[0])} pts/frame  "
+              f"(list as {nm}.ild,{v},2)")
 
     print()
     for count, fr in sorted(pointrate_ladder().items()):

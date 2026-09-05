@@ -106,24 +106,37 @@ Verified details:
 
 ### What the numbers mean
 
-**Field 3 = repeat count** (confidence: high). It scales inversely with
-animation length exactly as a loop count should: the 14-frame `Aurora14` is the
-only entry with 15 repeats, while every 255+ frame file gets 1.
+**Field 3 = repeat count — confirmed.** With every entry listed as `,15,2`, each
+file occupied exactly two passes on the wall: `psg.ild` (617 frames, 20.3 Hz)
+ran 59.5 s against 60.7 s predicted for two passes, and `raccoon.ild` (210
+frames, 26.2 Hz) ran ~16 s against 16.1 s.
 
-**Field 2 = a timing parameter, either frames-per-second or display seconds**
-(confidence: unresolved). Its values are `{8, 10, 15, 18, 20}` — equally
-plausible as a frame rate or as a per-clip duration, and the file contents
-can't distinguish the two. `Picture.bac` looks like someone testing exactly
-this: the same `west.ild` listed four times as `15,1 / 20,1 / 10,2 / 15,1,i`.
+**Field 2 is NOT frames per second.** Every entry in that same recording said
+`15`, yet the projector ran `psg.ild` at 20.9 Hz and `rate300.ild` at 39.9 Hz —
+both exactly what its point rate predicts, and neither anywhere near 15. It did
+not cap, pace, or otherwise honour the number as a frame rate. It is not a
+display duration either: durations are fully accounted for by
+`frames × repeats / refresh`, leaving nothing for it to set.
 
-> **Resolve it in two minutes.** Copy `timing_test.ild` (60 frames, one
-> revolution of a clock hand) to the card with a playlist of
-> `timing_test.ild,10,1` and time one revolution:
-> **~6 s → field 2 is fps** (60 frames ÷ 10). **~1 s, clip lasting ~10 s →
-> field 2 is seconds.**
+**The live hypothesis: field 2 is the scan rate in kpps.** Fitting the measured
+refresh across 300–900 points/frame gives a point rate of **15,040 pts/sec**
+against a playlist that said **15** — a 0.3% match. The original factory
+`Picture.prg` used 8/10/15/18/20, all plausible kpps ratings for a projector,
+and `Picture.bac` lists one file four times at different values, which reads
+exactly like somebody sweeping this setting.
 
-**The `,i` flag is unknown** (appears on `Aurora17`, `Aurora26`, and the last
-`.bac` line). 16 of 18 entries omit it — so omit it unless you're testing.
+> **Test it.** `make_demo.py` writes `k08.ild` … `k30.ild`: the same clock padded
+> to the same 500 points, each stamped with the value its playlist line carries
+> (`k08.ild,8,2` and so on), so scan rate is the only variable. Time one
+> revolution of each. If the hypothesis holds, refresh tracks field 2 —
+> 8→14.7 Hz, 12→21.3, 16→27.4, 20→33.5, 24→39.0, 30→45.6. If field 2 is ignored,
+> all six sit at ~26.6 Hz.
+>
+> If it *is* the scan rate, setting it above 15 buys real headroom: at 30 the
+> point budget for a flicker-free 25 Hz roughly doubles.
+
+**The `,i` flag remains unknown** (it appears on `Aurora17`, `Aurora26`, and the
+last `.bac` line). 16 of 18 factory entries omit it — so omit it unless testing.
 
 ---
 
@@ -176,7 +189,19 @@ scan cost.
 points per second  ≈  points_per_frame × 60 / revolution_seconds
 ```
 
-A worked example. Suppose you measure:
+Measured on this projector (IMG_4653.MOV), against the model
+`frame_time = 4.92 ms + points/15040`:
+
+| File | pts/frame | Revolution | Refresh | Predicted |
+|---|---:|---:|---:|---:|
+| `rate300` | 300 | 1.503 s | 39.93 Hz | 39.92 Hz |
+| `rate400` | 400 | 1.902 s | 31.54 Hz | 31.95 Hz |
+| `rate500` | 500 | 2.245 s | 26.72 Hz | 26.63 Hz |
+| `rate650` | 650 | 2.910 s | 20.62 Hz | 21.31 Hz |
+| `rate900` | 900 | 3.885 s | 15.44 Hz | 15.99 Hz |
+
+Within 3% across the whole working range. A worked example of the general
+method — suppose instead you measure:
 
 | File | pts/frame | Revolution |
 |---|---:|---:|
