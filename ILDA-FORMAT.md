@@ -111,29 +111,30 @@ file occupied exactly two passes on the wall: `psg.ild` (617 frames, 20.3 Hz)
 ran 59.5 s against 60.7 s predicted for two passes, and `raccoon.ild` (210
 frames, 26.2 Hz) ran ~16 s against 16.1 s.
 
-**Field 2 is NOT frames per second.** Every entry in that same recording said
-`15`, yet the projector ran `psg.ild` at 20.9 Hz and `rate300.ild` at 39.9 Hz —
-both exactly what its point rate predicts, and neither anywhere near 15. It did
-not cap, pace, or otherwise honour the number as a frame rate. It is not a
-display duration either: durations are fully accounted for by
-`frames × repeats / refresh`, leaving nothing for it to set.
+**Field 2 is the SCAN RATE in kpps — proven.** Listing one 500-point clock six
+times at 8/12/16/20/24/30 gave:
 
-**The live hypothesis: field 2 is the scan rate in kpps.** Fitting the measured
-refresh across 300–900 points/frame gives a point rate of **15,040 pts/sec**
-against a playlist that said **15** — a 0.3% match. The original factory
-`Picture.prg` used 8/10/15/18/20, all plausible kpps ratings for a projector,
-and `Picture.bac` lists one file four times at different values, which reads
-exactly like somebody sweeping this setting.
+| field 2 | refresh | implied scan rate |
+|---:|---:|---:|
+| 8 | 14.20 Hz | 7.6 kpps |
+| 12 | 21.01 Hz | 11.7 kpps |
+| 16 | 27.18 Hz | 15.7 kpps |
+| 20 | 34.11 Hz | 20.5 kpps |
+| 24 | 41.47 Hz | 26.1 kpps |
+| 30 | 47.36 Hz | 30.9 kpps |
 
-> **Test it.** `make_demo.py` writes `k08.ild` … `k30.ild`: the same clock padded
-> to the same 500 points, each stamped with the value its playlist line carries
-> (`k08.ild,8,2` and so on), so scan rate is the only variable. Time one
-> revolution of each. If the hypothesis holds, refresh tracks field 2 —
-> 8→14.7 Hz, 12→21.3, 16→27.4, 20→33.5, 24→39.0, 30→45.6. If field 2 is ignored,
-> all six sit at ~26.6 Hz.
->
-> If it *is* the scan rate, setting it above 15 buys real headroom: at 30 the
-> point budget for a flicker-free 25 Hz roughly doubles.
+An ignored field would have pinned all six at 26.2 Hz. It is emphatically not a
+frame rate: the firmware never ran anything at 15 fps while every line said 15.
+
+Fitting all six gives `frame_time = 2.26 ms + points / (0.917 × kpps × 1000)`,
+accurate to 3.5%. **The head delivers ~92% of the rate it is asked for, and was
+still scaling at 30.**
+
+> This supersedes the earlier conclusion that the projector was a ~15 kpps
+> device. It measured 15 kpps only because every playlist line happened to say
+> `15`. Asking for 30 doubles the point budget at a flicker-free 25 Hz, from
+> ~520 to ~1040 points per frame. The factory `Picture.prg` never went above 20,
+> which is why the default content is so sparse.
 
 **The `,i` flag remains unknown** (it appears on `Aurora17`, `Aurora26`, and the
 last `.bac` line). 16 of 18 factory entries omit it — so omit it unless testing.

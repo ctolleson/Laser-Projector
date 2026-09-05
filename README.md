@@ -65,9 +65,11 @@ Then copy the `.ild` to the projector's card and add a playlist line
 
 Both were measured from video of the projector, not assumed:
 
-**It runs at ~16 kpps**, not the 20–30 kpps the format usually assumes, with
-~6 ms fixed overhead per frame — and it is point-limited across the whole range,
-with no flat region. Budget ~540 points/frame for 25 Hz.
+**Field 2 of a playlist line sets the scan rate in kpps**, and the head delivers
+~92% of what it is asked for — measured across 8/12/16/20/24/30, where refresh
+ran 14.2→47.4 Hz. `frame_time = 2.26 ms + points/(0.917 × kpps × 1000)`. Ask for
+30 and the budget at a flicker-free 25 Hz is ~1040 points/frame; ask for 15 (as
+the factory content does) and it is ~520. Set it deliberately.
 
 **It reproduces only 7 of the 64 palette colours** — the saturated corners
 `(0, 16, 24, 31, 40, 48, 56)`. All 57 gradient indices render identically, as

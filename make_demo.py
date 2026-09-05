@@ -10,27 +10,27 @@ import ilda
 import strokefont as sf
 from ilda import FrameBuilder, Frame, RED, GREEN, CYAN, BLUE, MAGENTA, WHITE, YELLOW
 
-# --- measured projector profile (from the clock-ladder video, IMG_4646.MOV) --
-# Frame time fits  t = OVERHEAD + points/POINT_RATE  across 400..3200 pts/frame.
-# This head is far slower than the 20-30 kpps typical of the format, so frames
-# must be sized against these numbers, not against the reference content.
-POINT_RATE = 15040   # points/sec  (refit over 300-900 pts/frame, IMG_4653)
-OVERHEAD = 0.00492   # sec of fixed cost per frame
-BUDGET = 530         # points/frame -> ~25 Hz, the flicker-free working point
-
-# Refit predicts the measured refresh to within 3% across 300-900 points/frame
-# (rate300: 39.93 Hz measured vs 39.92 predicted). The earlier 16000/6.3ms came
-# from a sweep that ran out to 6400 points, where the lit burst is too brief for
-# a camera to catch reliably; these numbers come from the range frames are
-# actually authored in.
+# --- measured projector profile ----------------------------------------------
+# Field 2 of a playlist line is the SCAN RATE IN KPPS. Proven by listing one
+# 500-point clock six times at 8/12/16/20/24/30: refresh ran 14.2 -> 47.4 Hz,
+# where an ignored field would have pinned all six at 26.2 Hz.
 #
-# Note POINT_RATE lands within 0.3% of 15000, and every playlist entry in that
-# recording carried field 2 = 15. See kpps_test().
+#   frame_time = OVERHEAD + points / (SCAN_EFFICIENCY * kpps * 1000)
+#
+# fits those six within 3.5%. The head delivers ~92% of what it is asked for and
+# was still scaling at 30 -- it is NOT a 15 kpps projector. Earlier work here
+# measured "15 kpps" only because every playlist line happened to say 15.
+SCAN_EFFICIENCY = 0.917   # delivered points/sec per requested kpps
+OVERHEAD = 0.00226        # sec of fixed cost per frame
+SCAN_KPPS = 30            # what sync'd playlists request (field 2)
+POINT_RATE = SCAN_EFFICIENCY * SCAN_KPPS * 1000
+BUDGET = 1000             # points/frame -> ~26 Hz at 30 kpps
 
 
-def refresh_hz(points):
-    """Refresh this projector achieves for a frame of `points` points."""
-    return 1.0 / (OVERHEAD + points / POINT_RATE)
+def refresh_hz(points, kpps=None):
+    """Refresh this projector achieves for a frame, at a given field-2 value."""
+    k = SCAN_KPPS if kpps is None else kpps
+    return 1.0 / (OVERHEAD + points / (SCAN_EFFICIENCY * k * 1000.0))
 
 
 R = 26000            # keep well inside +/-32767 so nothing clips
@@ -109,7 +109,7 @@ def timing_test(nframes=60, ticks=12, label=None):
 
 
 # ----------------------------------------------------------- starfield ------
-def starfield(nframes=120, nstars=20, seed=3):
+def starfield(nframes=120, nstars=40, seed=3):
     """Warp-speed starfield: stars stream outward from the centre.
 
     Each star is a streak, not a dot -- a laser renders a dot as a stationary
@@ -133,10 +133,9 @@ def starfield(nframes=120, nstars=20, seed=3):
     (where it is leaving the frame) to the centre, so the projector's repeat
     count produces no visible jump.
 
-    `nstars` is the point-budget dial: each star costs ~26 points. At 20 stars
-    a frame is ~540 points, which this projector refreshes at ~25 Hz. The
-    earlier 36 stars measured out at ~16 Hz -- visibly flickering. Raise it only
-    against a measured POINT_RATE, not against the format's nominal 20-30 kpps.
+    `nstars` is the point-budget dial: each star costs ~26 points. At 40 stars
+    a frame is ~1050 points, which refreshes at ~25 Hz once the playlist asks
+    for 30 kpps. Halve it if you drop SCAN_KPPS back to 15.
     """
     rnd = random.Random(seed)
     GOLDEN = math.pi * (3 - math.sqrt(5))          # ~137.5 deg
@@ -590,10 +589,34 @@ def _raccoon_strokes():
         S.append(([(sgn * 55, -4), (sgn * 70, -4)], 4))
         S.append(([(sgn * 21, -24), (sgn * 50, -20)], 10))         # whiskers
         S.append(([(sgn * 21, -30), (sgn * 52, -33)], 10))
+
+    # Shift the face left to make room, then add the ringed tail -- the single
+    # most identifiable raccoon feature, and affordable now that the playlist
+    # asks for 30 kpps instead of 15.
+    S = [([(x - 26, y + 6) for x, y in st], z) for st, z in S]
+
+    def tail_pt(t, off):
+        # Base sits clear of the head (its outline reaches x=32 after the
+        # shift, cheek fur to x=44), so the tail sweeps out from behind rather
+        # than across the face.
+        cx = 38 + 62 * t
+        cy = -50 + 52 * t + 28 * math.sin(math.pi * t)
+        # outward normal of the centreline, for the tapering width
+        dx, dy = 62.0, 52 + 28 * math.pi * math.cos(math.pi * t)
+        L = math.hypot(dx, dy)
+        w = 25 * (1 - 0.42 * t)
+        return (cx - dy / L * off * w, cy + dx / L * off * w)
+
+    n = 12
+    upper = [tail_pt(i / n, 0.5) for i in range(n + 1)]
+    lower = [tail_pt(i / n, -0.5) for i in range(n + 1)]
+    S.append((upper + lower[::-1] + [upper[0]], -12))          # tail outline
+    for t in (0.24, 0.44, 0.64, 0.84):                          # rings
+        S.append(([tail_pt(t, 0.5), tail_pt(t, -0.5)], -11))
     return S
 
 
-def raccoon(nframes=210, scale=235.0):
+def raccoon(nframes=210, scale=182.0):
     """A raccoon spinning about the vertical axis, cycling through colours.
 
     Colour steps through ilda.SUPPORTED -- the seven indices this projector
