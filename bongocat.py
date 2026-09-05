@@ -1,118 +1,89 @@
 """
 bongocat.py -- the bongo cat meme as a laser animation.
 
-Traced from the reference frames in BongoCat/bongo-cat-stm32/docs: the cat sits
-behind a table edge that runs diagonally down to the right, and alternately
-slaps it with each paw.
+Geometry is traced from the project's own sprite frames
+(BongoCat/bongo-cat-stm32/docs/frame_*.png) rather than redrawn by eye. The
+first hand-drawn attempt got the anatomy wrong: it put the paws on the body as
+free-floating circles, when in the original they are the ends of the arms and
+part of the body silhouette, and the belly line runs between them.
 
-Two things make this cheap enough to draw at a high refresh:
-
-  * The table edge doubles as the cat's lower outline. The body is an OPEN path
-    that starts and ends exactly on the table line, so the beam never retraces
-    a segment it has already drawn.
-  * Impact dashes are only emitted on the frames where a paw is actually down,
-    so the frame cost rises only during a hit.
+Each sprite is thinned to a centreline, traced into polylines and simplified,
+which turns ~330 lit pixels into ~27 strokes of ~75 vertices -- cheap enough to
+scan at a high refresh while still matching the original drawing.
 """
 import math
 
 import ilda
 from ilda import FrameBuilder, WHITE
+from trace_bitmap import load_png, strokes
 
-# Art spans x -115..115 and y -30..53. Scale so the width nearly fills the
-# projector's +/-32767, and shift so the composition sits centred vertically.
-SCALE = 243.0
-Y_SHIFT = -11.5
-TABLE = ((-115.0, 18.0), (115.0, -30.0))
-
-
-def _table_y(x):
-    (x0, y0), (x1, y1) = TABLE
-    return y0 + (x - x0) * (y1 - y0) / (x1 - x0)
-
-
-# Body: an open path from the table on the left, over the ear, down to the
-# table on the right. Both ends sit ON the table line by construction.
-BODY = [
-    (-58, 6.1), (-52, 14), (-44, 21), (-33, 28), (-20, 34), (-8, 40),
-    (0, 46), (4, 53),                                   # ear tip
-    (9, 44), (16, 39), (26, 34), (37, 28), (47, 22), (54, 17),
-    (57, 20), (62, 22), (66, 16),                       # right ear notch
-    (68, 8), (69, -2), (68, -10), (64, -16), (60, -18.5),
-]
-
-# Drawn a little heavier than the reference sprite: at this size a laser
-# swallows one- or two-unit marks, and the face is what makes it read as a cat.
-# Sits about a third of the way along the body, matching the reference -- and
-# clear of the right paw, which occupies x 13..35 when raised.
-FACE = [
-    [(-26, 14), (-26, 20)],                             # left eye
-    [(-15, 12), (-15, 18)],                             # right eye
-    [(-9, 9), (-6, 5.5), (-3, 9), (0, 5.5), (3, 9)],    # mouth
-]
-
-# Paw travel: up (raised) -> down (on the table).
-PAWS = {
-    'left':  {'up': (-46, 13), 'down': (-55, 3.5)},
-    'right': {'up': (24, -1), 'down': (17, -12)},
+DOCS = '/Users/ctolleson/Documents/Claude/BongoCat/bongo-cat-stm32/docs/'
+SPRITES = {
+    'A': 'frame_paws_on_air.png',
+    'L': 'frame_left_paw_on_table.png',
+    'R': 'frame_right_paw_on_table.png',
+    'B': 'frame_paws_on_table.png',
 }
 
 
-def _ellipse(cx, cy, rx, ry, n=12):
-    return [(cx + rx * math.cos(2 * math.pi * i / n),
-             cy + ry * math.sin(2 * math.pi * i / n)) for i in range(n + 1)]
+def _order(sts):
+    """Greedy nearest-neighbour stroke order, to cut blanked travel.
 
-
-def _paw(cx, cy):
-    """A paw: rounded blob plus two toe splits along its lower edge."""
-    out = [_ellipse(cx, cy, 11, 8.5, 12)]
-    out.append([(cx - 4, cy - 7.7), (cx - 4, cy - 3)])
-    out.append([(cx + 3, cy - 8.1), (cx + 3, cy - 3.5)])
-    return out
-
-
-def _impact(cx, cy):
-    """Dashes radiating from a struck paw -- only drawn on hit frames."""
+    Every stroke costs a blanked jump plus dwell at both ends, so with 27 of
+    them the travel between strokes dominates the frame, not the drawing.
+    """
+    rest = list(sts)
     out = []
-    for deg, r0, r1 in ((205, 12, 20), (250, 11, 19), (295, 12, 20)):
-        a = math.radians(deg)
-        out.append([(cx + r0 * math.cos(a), cy + r0 * math.sin(a)),
-                    (cx + r1 * math.cos(a), cy + r1 * math.sin(a))])
+    cur = (0.0, 0.0)
+    while rest:
+        best, rev, bd = None, False, None
+        for i, s in enumerate(rest):
+            for r, end in ((False, s[0]), (True, s[-1])):
+                d = (end[0]-cur[0])**2 + (end[1]-cur[1])**2
+                if bd is None or d < bd:
+                    best, rev, bd = i, r, d
+        s = rest.pop(best)
+        if rev:
+            s = s[::-1]
+        out.append(s)
+        cur = s[-1]
     return out
+
+
+def _load():
+    """Traced strokes per state, plus the shared bbox so nothing jitters."""
+    raw = {k: strokes(load_png(DOCS + f)) for k, f in SPRITES.items()}
+    pts = [p for sts in raw.values() for s in sts for p in s]
+    x0 = min(p[0] for p in pts); x1 = max(p[0] for p in pts)
+    y0 = min(p[1] for p in pts); y1 = max(p[1] for p in pts)
+    return {k: _order(v) for k, v in raw.items()}, (x0, y0, x1, y1)
 
 
 def frames(pattern=('L', 'R', 'L', 'R', 'B', 'L', 'R', 'B'),
-           beat=30, hit=12, colour=WHITE):
-    """Render the drum pattern. 'L'/'R' strike one paw, 'B' strikes both.
+           beat=30, hit=12, colour=WHITE, width=58000):
+    """Render the drum pattern. Between strikes the cat returns to paws-up.
 
     `beat` is in FRAMES, and on this projector frames advance at the refresh
-    rate -- which for a frame this cheap is ~70 Hz. Timing the drumming is
-    therefore a matter of frame count, not of a frame-rate setting: at 30 frames
-    a beat, eight beats run 3.4 s, about 139 BPM. Shorten it and the cat plays
-    faster.
+    rate -- which for a frame this cheap is well over 60 Hz. Tempo is therefore
+    a matter of frame count: 30 frames a beat runs eight beats in ~3.4 s, about
+    140 BPM.
     """
+    art, (x0, y0, x1, y1) = _load()
+    scale = width / (x1 - x0)
+    cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+
+    def to_laser(p):
+        # image y runs down, laser y runs up
+        return ((p[0] - cx) * scale, (cy - p[1]) * scale)
+
     out = []
     for step in pattern:
         for f in range(beat):
-            down = {'left': False, 'right': False}
-            if f < hit:
-                if step in ('L', 'B'): down['left'] = True
-                if step in ('R', 'B'): down['right'] = True
-
-            fb = FrameBuilder(max_step=1400, dwell_start=3, dwell_end=2,
+            state = step if f < hit else 'A'
+            fb = FrameBuilder(max_step=1500, dwell_start=3, dwell_end=2,
                               dwell_blank=2)
-            S = lambda pts: [(x * SCALE, (y + Y_SHIFT) * SCALE) for x, y in pts]
-
-            fb.polyline(S([TABLE[0], TABLE[1]]), color=colour)
-            fb.polyline(S(BODY), color=colour)
-            for m in FACE:
-                fb.polyline(S(m), color=colour)
-            for name, pos in PAWS.items():
-                cx, cy = pos['down' if down[name] else 'up']
-                for st in _paw(cx, cy):
-                    fb.polyline(S(st), color=colour)
-                if down[name]:
-                    for st in _impact(cx, cy):
-                        fb.polyline(S(st), color=colour)
+            for s in art[state]:
+                fb.polyline([to_laser(p) for p in s], color=colour)
             out.append(fb.build())
     return out
 
@@ -124,4 +95,5 @@ if __name__ == '__main__':
     pts = [len(f) for f in fr]
     import make_demo as m
     print(f"bongocat.ild  {len(fr)} frames  {min(pts)}-{max(pts)} pts/frame  "
-          f"{n} bytes  -> {m.refresh_hz(max(pts), 30):.1f} Hz at 30 kpps")
+          f"{n} bytes  -> {m.refresh_hz(max(pts), 30):.1f} Hz at 30 kpps, "
+          f"{len(fr)/m.refresh_hz(max(pts), 30):.2f}s per cycle")
