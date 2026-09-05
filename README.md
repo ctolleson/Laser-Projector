@@ -61,6 +61,19 @@ python3 ildaview.py spin.ild --gif --fps 20   # preview before sending to hardwa
 Then copy the `.ild` to the projector's card and add a playlist line
 (`spin.ild,15,1`).
 
+### Two hardware facts worth knowing first
+
+Both were measured from video of the projector, not assumed:
+
+**It runs at ~16 kpps**, not the 20–30 kpps the format usually assumes, with
+~6 ms fixed overhead per frame — and it is point-limited across the whole range,
+with no flat region. Budget ~540 points/frame for 25 Hz.
+
+**It reproduces only 7 of the 64 palette colours** — the saturated corners
+`(0, 16, 24, 31, 40, 48, 56)`. All 57 gradient indices render identically, as
+white. Its green is dim, so white reads pale magenta and cyan reads blue-violet.
+See [ILDA-FORMAT.md](ILDA-FORMAT.md) for the measured table.
+
 ### Watch the point budget
 
 Points-per-frame × fps must stay under the projector's point rate (typically

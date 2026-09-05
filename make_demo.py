@@ -161,7 +161,11 @@ def starfield(nframes=120, nstars=20, seed=3):
             if r_tail < MIN_R * 0.5:
                 continue                            # just respawned at centre
             c, s = math.cos(ang), math.sin(ang)
-            colour = WHITE if u > 0.66 else (CYAN if u > 0.33 else BLUE)
+            # Two tiers, not three: this head renders cyan and blue almost
+            # identically (its green is too dim for cyan to read as cyan), so a
+            # white/cyan/blue depth ramp collapses to white/blue/blue on the
+            # wall. White vs blue is the only pair that actually separates.
+            colour = WHITE if u > 0.5 else BLUE
             drawn.append((ang, (r_tail * c, r_tail * s), (r * c, r * s), colour))
 
         # Sweep the beam around by angle so it never crosses the frame between
@@ -175,7 +179,7 @@ def starfield(nframes=120, nstars=20, seed=3):
 
 # ---------------------------------------------------------- text reveal -----
 def text_reveal(lines=('PRODUCT', 'SECURITY', 'GUILD'), nframes=148,
-                colour=CYAN, hold=54, spin_in=32, stagger=13, spin_out=30,
+                colour=GREEN, hold=54, spin_in=32, stagger=13, spin_out=30,
                 tail_beat=4):
     """Three stacked lines that rotate in about the vertical axis, hold, exit.
 
@@ -187,6 +191,10 @@ def text_reveal(lines=('PRODUCT', 'SECURITY', 'GUILD'), nframes=148,
 
     That skip is what makes the loop seamless: the exit ends past edge-on and
     the entry starts past edge-on, so nothing is drawn across the wrap.
+
+    Drawn in GREEN because it is one of the few indices this projector renders
+    truly (see ilda.SUPPORTED). Any of ilda.SUPPORTED works; white comes out
+    pale magenta here, not white.
     """
     text = [t.upper() for t in lines]
     unit = TEXT_W / max(sf.line_width(t) for t in text)   # one scale for all

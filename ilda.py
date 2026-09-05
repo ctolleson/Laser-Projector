@@ -24,6 +24,51 @@ PALETTE = [
 ]
 RED, ORANGE, YELLOW, GREEN, CYAN, BLUE, MAGENTA, WHITE = 0, 8, 16, 24, 31, 40, 48, 56
 
+# --- what this projector actually reproduces ------------------------------
+# Measured off a filmed palette chart (all 64 indices, IMG_4650.MOV).
+#
+# The head resolves only the seven saturated corners of the RGB cube. EVERY
+# other index -- all 57 gradient entries -- renders identically, as white. So
+# the palette's careful red->orange->yellow ramp does not exist here: indices
+# 1..15 are not shades of orange, they are all just white.
+#
+# Its green is also dim next to red and blue, which is why white reads as pale
+# magenta and cyan reads as blue-violet. Those two are still distinguishable
+# from each other, but neither looks like its name.
+#
+#   index  standard        measured RGB      appearance
+#   0      red             [161, 62,  69]    red
+#   16     yellow          [149, 96,  68]    yellow
+#   24     green           [ 85,129,  57]    green
+#   31     cyan            [ 79, 82, 170]    blue-violet (green too dim)
+#   40     blue            [ 65, 47, 161]    blue
+#   48     magenta         [119, 54, 141]    magenta
+#   56     white           [130, 72, 141]    pale magenta (green too dim)
+#   other  (gradients)     [131, 73, 141]    white -- identical to 56
+#
+# ORANGE (8) is NOT in that set: it is a gradient entry and comes out white.
+SUPPORTED = (0, 16, 24, 31, 40, 48, 56)
+
+SUPPORTED_NAMES = {
+    0: 'red', 16: 'yellow', 24: 'green', 31: 'cyan (reads blue-violet)',
+    40: 'blue', 48: 'magenta', 56: 'white (reads pale magenta)',
+}
+
+
+def is_supported(index):
+    """True if this projector reproduces `index` as a distinct colour."""
+    return (index & 63) in SUPPORTED
+
+
+def unsupported_colors(frames):
+    """Colour indices used by lit points that this projector renders as white."""
+    bad = set()
+    for fr in frames:
+        for x, y, z, s, c in (fr.points if isinstance(fr, Frame) else fr):
+            if not (s & BLANK) and not is_supported(c):
+                bad.add(c & 63)
+    return sorted(bad)
+
 # --- status byte bits --------------------------------------------------------
 BLANK = 0x40    # bit 6: laser off while moving to this point
 LAST  = 0x80    # bit 7: final point of the frame

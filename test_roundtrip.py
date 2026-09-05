@@ -159,6 +159,27 @@ def test_ladder_scan_cost_is_the_only_variable():
     print(f"  ladder: point counts strictly increase {counts}")
 
 
+def test_generated_uses_only_reproducible_colours():
+    """Guard against authoring in colours this projector cannot show.
+
+    It resolves only the seven saturated corners of the palette; every other
+    index renders as white. A gradient index is not a subtle shade here, it is
+    a silently wrong colour.
+    """
+    import make_demo
+    for name, build in (('cube', make_demo.cube),
+                        ('lissajous', make_demo.lissajous),
+                        ('starfield', make_demo.starfield),
+                        ('psg', make_demo.text_reveal),
+                        ('palette', None),
+                        ('timing_test', make_demo.timing_test)):
+        if build is None:
+            continue          # the palette chart deliberately sweeps all 64
+        bad = ilda.unsupported_colors(build())
+        assert not bad, f"{name}: uses indices this projector shows as white: {bad}"
+    print("  colours: every generated animation sticks to ilda.SUPPORTED")
+
+
 if __name__ == '__main__':
     tests = [v for k, v in sorted(globals().items())
              if k.startswith('test_') and callable(v)]

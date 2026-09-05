@@ -200,6 +200,46 @@ rate, with some margin.
 
 ---
 
+## 3b. This projector's real palette (measured)
+
+The spec says index 56 is white and 40 is blue. Filming a chart of all 64
+indices (`palette.ild`) shows this head does not implement the standard table:
+
+**It resolves only the seven saturated corners of the RGB cube. All 57 gradient
+indices render identically, as white.** The palette's red→orange→yellow ramp
+does not exist here — indices 1–15 are not shades of orange, they are white.
+
+| index | standard | measured RGB | on the wall |
+|---:|---|---|---|
+| 0 | red | `[161, 62, 69]` | **red** |
+| 16 | yellow | `[149, 96, 68]` | **yellow** |
+| 24 | green | `[85, 129, 57]` | **green** |
+| 31 | cyan | `[79, 82, 170]` | blue-violet |
+| 40 | blue | `[65, 47, 161]` | **blue** |
+| 48 | magenta | `[119, 54, 141]` | **magenta** |
+| 56 | white | `[130, 72, 141]` | pale magenta |
+| *all others* | gradients | `[131, 73, 141]` | white — identical to 56 |
+
+Its **green is dim** relative to red and blue. That is why white reads as pale
+magenta and cyan as blue-violet — and it is confirmed by index 48: true magenta
+contains no green at all and measures `g=54`, against the white default's
+`g=72`. The two are otherwise the same colour.
+
+**Practical consequences**
+
+- Author only from `ilda.SUPPORTED` — `(0, 16, 24, 31, 40, 48, 56)`. Anything
+  else is silently white, not a subtle shade.
+- `ORANGE` (8) is a gradient entry: it comes out white. Don't use it.
+- Cyan and blue are barely distinguishable, so don't build a depth or intensity
+  ramp out of that pair.
+- `ilda.unsupported_colors(frames)` lists offending indices; `test_roundtrip.py`
+  enforces it on everything `make_demo.py` generates.
+
+Beam alignment is also visibly off: a magenta line photographs as a red line and
+a blue line a few pixels apart, rather than one blended stroke.
+
+---
+
 ## 4. Toolkit
 
 | File | Purpose |
