@@ -22,10 +22,20 @@ def sha(path):
     return hashlib.sha256(open(path, 'rb').read()).hexdigest()
 
 
+class Skip(Exception):
+    """Raised when a check needs reference files that aren't present."""
+
+
+def _reference_files():
+    files = sorted(glob.glob(os.path.join(REF_DIR, '*.ild')))
+    if not files:
+        raise Skip(f"no reference files in {REF_DIR}/ -- see README")
+    return files
+
+
 def test_roundtrip():
     """Read + rewrite every reference file; require byte-exact output."""
-    files = sorted(glob.glob(os.path.join(REF_DIR, '*.ild')))
-    assert files, f"no reference files found in {REF_DIR}/"
+    files = _reference_files()
     tmp = '/tmp/_ilda_roundtrip.ild'
     frames = points = 0
     bad = []
@@ -47,7 +57,7 @@ def test_roundtrip():
 
 def test_parse_consumes_whole_file():
     """Header record counts must account for every byte, with no slack."""
-    for p in sorted(glob.glob(os.path.join(REF_DIR, '*.ild'))):
+    for p in _reference_files():
         show = ilda.read(p)
         consumed = sum(32 + len(f) * 8 for f in show) + 32   # + EOF header
         actual = os.path.getsize(p)
@@ -65,7 +75,7 @@ def test_reference_invariants():
     """The conventions ilda.FrameBuilder reproduces really do hold."""
     ends_blanked = total = 0
     strays = []
-    for p in sorted(glob.glob(os.path.join(REF_DIR, '*.ild'))):
+    for p in _reference_files():
         for i, f in enumerate(ilda.read(p)):
             total += 1
             if f.points[-1][3] & ilda.BLANK:
@@ -79,7 +89,7 @@ def test_reference_invariants():
 
 def test_last_flag_outliers():
     """The LAST flag is advisory -- record it as a known-optional field."""
-    for p in sorted(glob.glob(os.path.join(REF_DIR, '*.ild'))):
+    for p in _reference_files():
         show = ilda.read(p)
         sets_flag = any(f.points[-1][3] & ilda.LAST for f in show)
         expected = os.path.basename(p) not in NONCONFORMING | {'west.ild'}
@@ -95,6 +105,7 @@ def test_generated_output_is_scanner_safe():
     MAX_PTS = 1867             # largest frame in the reference set
     for name, build in (('cube', make_demo.cube),
                         ('lissajous', make_demo.lissajous),
+                        ('starfield', make_demo.starfield),
                         ('timing_test', make_demo.timing_test)):
         worst = 0
         for f in build():
@@ -109,14 +120,19 @@ def test_generated_output_is_scanner_safe():
 
 
 if __name__ == '__main__':
-    tests = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
-    failed = 0
+    tests = [v for k, v in sorted(globals().items())
+             if k.startswith('test_') and callable(v)]
+    failed = skipped = 0
     for t in tests:
         print(f"{t.__name__}:")
         try:
             t()
+        except Skip as e:
+            skipped += 1
+            print(f"  SKIP: {e}")
         except AssertionError as e:
             failed += 1
             print(f"  FAIL: {e}")
-    print(f"\n{len(tests) - failed}/{len(tests)} passed")
+    passed = len(tests) - failed - skipped
+    print(f"\n{passed} passed, {failed} failed, {skipped} skipped")
     sys.exit(1 if failed else 0)
