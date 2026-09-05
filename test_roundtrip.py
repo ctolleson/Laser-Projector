@@ -106,6 +106,7 @@ def test_generated_output_is_scanner_safe():
     for name, build in (('cube', make_demo.cube),
                         ('lissajous', make_demo.lissajous),
                         ('starfield', make_demo.starfield),
+                        ('psg', make_demo.text_reveal),
                         ('timing_test', make_demo.timing_test)):
         worst = 0
         for f in build():
@@ -117,6 +118,20 @@ def test_generated_output_is_scanner_safe():
                     worst = max(worst, math.hypot(b[0] - a[0], b[1] - a[1]))
         assert worst <= P99_LIT_STEP, f"{name}: lit step {worst:.0f} > {P99_LIT_STEP}"
         print(f"  generated: {name} ok (max lit step {worst:.0f})")
+
+
+def test_ladder_is_visually_identical():
+    """Padding must change only the point count, never the drawing."""
+    import make_demo
+    base = make_demo.timing_test(ticks=4)
+    lit = lambda fr: [p[:3] for p in fr.points if not p[3] & ilda.BLANK]
+    for n, frames in sorted(make_demo.pointrate_ladder().items()):
+        assert len(frames) == len(base)
+        for a, b in zip(base, frames):
+            assert len(b) == n, f"rate{n}: frame has {len(b)} points, want {n}"
+            assert lit(a) == lit(b), f"rate{n}: padding altered the lit geometry"
+            assert b.points[-1][3] & ilda.LAST, f"rate{n}: lost the LAST flag"
+    print("  ladder: padding preserves geometry at every step")
 
 
 if __name__ == '__main__':

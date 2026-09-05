@@ -146,13 +146,68 @@ files (units are of 65,536 full scale):
 
 ---
 
+## 3a. Measuring your projector's point rate
+
+`timing_test.ild` alone gives you the **frame rate**, not the point rate — it
+draws one revolution of a clock hand per 60 frames, so timing one revolution
+tells you how fast frames advance. To get points-per-second you need to find
+where the projector runs out of headroom.
+
+`make_demo.py` writes a ladder for this: `rate400.ild`, `rate800.ild`,
+`rate1600.ild`, `rate3200.ild`, `rate6400.ild`. Each is the *same* clock padded
+to a different points-per-frame count. The padding is blanked dwell points,
+which cost the scanner exactly as much time as lit ones — the beam still has to
+travel — so the picture is identical at every step and the only variable is
+scan cost.
+
+**Procedure**
+
+1. Copy the five `rate*.ild` files to the card with one playlist line each,
+   all with identical parameters (e.g. `rate400.ild,15,1`).
+2. Time **one full revolution** of the hand in each, with a phone stopwatch.
+   The red index mark at 12 o'clock is the start and end.
+3. Tabulate. While the projector has headroom the revolution time is **flat**.
+   Once `points/frame × fps` exceeds its point rate it can no longer keep up and
+   the time grows **in proportion** to points/frame. That knee is the answer.
+
+**Reading the result** — on any file past the knee:
+
+```
+points per second  ≈  points_per_frame × 60 / revolution_seconds
+```
+
+A worked example. Suppose you measure:
+
+| File | pts/frame | Revolution |
+|---|---:|---:|
+| `rate400` | 400 | 4.0 s |
+| `rate800` | 800 | 4.0 s |
+| `rate1600` | 1600 | 4.0 s |
+| `rate3200` | 3200 | 6.4 s |
+| `rate6400` | 6400 | 12.8 s |
+
+Flat through 1600, then doubling. The projector is saturated at 3200:
+`3200 × 60 / 6.4 = 30,000 pps` — a 30 kpps head. The flat region also tells you
+the frame rate is `60 / 4.0 = 15 fps`, which independently confirms field 2 of
+the playlist is **frames per second** (the line said `15`).
+
+That second reading is a bonus: **the ladder settles the playlist-field question
+at the same time**, because a flat revolution time means frames are advancing at
+a fixed rate you can read straight off.
+
+Then size your own animations so `points/frame × fps` stays under the measured
+rate, with some margin.
+
+---
+
 ## 4. Toolkit
 
 | File | Purpose |
 |---|---|
 | `ilda.py` | Read/write library + `FrameBuilder`. Round-trips all 20 reference files byte-exact. |
 | `ildaview.py` | Preview to PNG contact sheet or animated GIF — check work without the projector. |
-| `make_demo.py` | Generates `cube.ild` (3D, uses Z), `lissajous.ild`, `timing_test.ild`. |
+| `make_demo.py` | Generates `starfield.ild`, `psg.ild` (rotating text), `cube.ild` (3D, uses Z), `lissajous.ild`, `timing_test.ild`, and the `rate*.ild` ladder. |
+| `strokefont.py` | Single-stroke vector font (A–Z, 0–9, punctuation) for laser text. |
 | `test_roundtrip.py` | The correctness proof: rewrites all 20 reference files byte-exact and checks the invariants above. Run `python3 test_roundtrip.py`. |
 
 ```python

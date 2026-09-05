@@ -18,7 +18,8 @@ scanner-safety practices measured from real content.
 |---|---|
 | `ilda.py` | Read/write library plus `FrameBuilder`, which applies the blanking, interpolation and dwell-point discipline that real scanners need. |
 | `ildaview.py` | Preview to a PNG contact sheet or animated GIF — check work without the projector. |
-| `make_demo.py` | Example animations: `starfield`, `cube` (3D), `lissajous`, `timing_test`. |
+| `make_demo.py` | Example animations: `starfield`, `psg` (rotating text reveal), `cube` (3D), `lissajous`, `timing_test`, plus the `rate*` point-rate ladder. |
+| `strokefont.py` | Single-stroke vector font (A–Z, 0–9, punctuation). A laser can't use a normal font — TrueType glyphs are filled outlines, so tracing one draws a hollow letter. |
 | `test_roundtrip.py` | The correctness proof. |
 
 ## Correctness
@@ -66,6 +67,13 @@ Points-per-frame × fps must stay under the projector's point rate (typically
 20–30 kpps). Exceed it and the hardware doesn't error — it just slows down, and
 the animation drags and flickers. Reference content runs a median of 655 points
 per frame.
+
+To measure your own projector's rate, `make_demo.py` writes a ladder of files
+(`rate400.ild` … `rate6400.ild`): the same clock animation padded to different
+point counts with blanked dwells, which cost scan time but draw nothing. Time
+one revolution of each; the point where revolution time stops being flat is your
+limit. Full procedure in
+[ILDA-FORMAT.md](ILDA-FORMAT.md#3a-measuring-your-projectors-point-rate).
 
 ## Requirements
 

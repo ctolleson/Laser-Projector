@@ -7,9 +7,12 @@ import math
 import random
 
 import ilda
+import strokefont as sf
 from ilda import FrameBuilder, Frame, RED, GREEN, CYAN, BLUE, MAGENTA, WHITE, YELLOW
 
 R = 26000            # keep well inside +/-32767 so nothing clips
+TEXT_W = 46000       # target width of the widest text line
+FOCAL = 62000        # perspective distance for Y-axis rotation
 
 
 # ---------------------------------------------------------------- cube -------
@@ -50,7 +53,7 @@ def lissajous(nframes=90, steps=180):
 
 
 # --------------------------------------------------------- timing test -------
-def timing_test(nframes=60):
+def timing_test(nframes=60, ticks=12):
     """A hand that makes exactly ONE revolution over 60 frames.
 
     Time one full revolution on the projector to decode field 2 of Picture.prg:
@@ -62,11 +65,11 @@ def timing_test(nframes=60):
     for f in range(nframes):
         fb = FrameBuilder()
         # dial: 12 tick marks
-        for k in range(12):
-            t = 2 * math.pi * k / 12
+        for k in range(ticks):
+            t = 2 * math.pi * k / ticks
             c, s = math.cos(t), math.sin(t)
             fb.polyline([(R * 0.80 * c, R * 0.80 * s), (R * c, R * s)],
-                        color=(RED if k == 3 else BLUE))  # k==3 is 12 o'clock
+                        color=(RED if k == ticks // 4 else BLUE))  # index at 12 o'clock
         # hand, clockwise from 12 o'clock
         t = math.pi / 2 - 2 * math.pi * f / nframes
         fb.polyline([(0, 0), (R * 0.7 * math.cos(t), R * 0.7 * math.sin(t))],
@@ -149,12 +152,125 @@ def starfield(nframes=120, nstars=36, seed=3):
     return frames
 
 
+# ---------------------------------------------------------- text reveal -----
+def text_reveal(lines=('PRODUCT', 'SECURITY', 'GUILD'), nframes=148,
+                colour=CYAN, hold=54, spin_in=32, stagger=13, spin_out=30):
+    """Three stacked lines that rotate in about the vertical axis, hold, exit.
+
+    Rotation is about Y, so a line at 90 degrees is edge-on and collapses to a
+    vertical bar -- which on a laser is not "invisible" but a bright vertical
+    streak, every point in the line stacked on one column. Lines are therefore
+    skipped entirely while near edge-on, which also hands their point budget
+    back to the lines that are actually readable.
+
+    That skip is what makes the loop seamless: the exit ends past edge-on and
+    the entry starts past edge-on, so nothing is drawn across the wrap.
+    """
+    text = [t.upper() for t in lines]
+    unit = TEXT_W / max(sf.line_width(t) for t in text)   # one scale for all
+    gap = unit * 9.5                                       # baseline spacing
+    y0 = gap * (len(text) - 1) / 2.0
+
+    def placed(i, t):
+        """Glyph strokes for line i, centred, in projector units."""
+        w = sf.line_width(t) * unit
+        oy = y0 - i * gap - unit * sf.CAP / 2.0
+        return [[(x * unit - w / 2.0, y * unit + oy) for x, y in s]
+                for s in sf.strokes(t)]
+
+    geom = [placed(i, t) for i, t in enumerate(text)]
+
+    def ease(u):                       # ease-out cubic: fast in, settles gently
+        return 1 - (1 - u) ** 3
+
+    def angle(i, f):
+        """This line's rotation in radians: 90 deg = edge-on, 0 = facing."""
+        start = i * stagger
+        if f < start:
+            return math.pi / 2
+        if f < start + spin_in:
+            return math.pi / 2 * (1 - ease((f - start) / spin_in))
+        out = stagger * (len(text) - 1) + spin_in + hold
+        if f < out:
+            return 0.0
+        if f < out + spin_out:
+            return -math.pi / 2 * ease((f - out) / spin_out)
+        return -math.pi / 2
+
+    frames = []
+    for f in range(nframes):
+        fb = FrameBuilder(max_step=1100, dwell_start=4, dwell_end=3,
+                          dwell_blank=3)
+        for i, strokes in enumerate(geom):
+            a = angle(i, f)
+            ca, sa = math.cos(a), math.sin(a)
+            if abs(ca) < 0.12:
+                continue               # edge-on: a bright bar, not a word
+            for s in strokes:
+                proj = []
+                for x, y in s:
+                    z = x * sa
+                    k = FOCAL / (FOCAL + z)          # weak perspective
+                    proj.append((x * ca * k, y * k, z))
+                fb.polyline(proj, color=colour)
+        if not fb.pts:                 # every line edge-on: park the beam
+            fb.move_to(0, 0)
+        frames.append(fb.build())
+    return frames
+
+
+# ------------------------------------------------- point-rate measurement ----
+def pad_to(frame, n):
+    """Pad a frame to exactly n points with blanked dwells at the parked spot.
+
+    Blanked points cost the scanner exactly as much time as lit ones -- the
+    beam still has to travel. So padding raises a frame's scan cost without
+    changing a pixel of what you see, which is what lets a ladder of files
+    isolate the projector's point rate from everything else.
+    """
+    pts = list(frame.points)
+    if n < len(pts):
+        raise ValueError(f"frame already has {len(pts)} points, cannot pad to {n}")
+    x, y, z, s, c = pts[-1]
+    pts[-1] = (x, y, z, s & ~ilda.LAST, c)              # demote the old last
+    pts += [(x, y, z, ilda.BLANK, 0)] * (n - len(pts) - 1)
+    pts.append((x, y, z, ilda.BLANK | ilda.LAST, 0))
+    return ilda.Frame(pts, frame.name, frame.company)
+
+
+def pointrate_ladder(counts=(400, 800, 1600, 3200, 6400)):
+    """Clock-hand files at increasing points/frame, for finding the point rate.
+
+    Each file is the same one-revolution-per-60-frames clock, padded to a
+    different point count. Time one revolution of each: while the projector has
+    headroom the revolution time stays flat, and once points/frame x fps exceeds
+    its point rate the time grows in proportion. The knee is the answer:
+
+        points per second ~= points_per_frame x 60 / revolution_seconds
+
+    measured on any file past the knee.
+    """
+    # A lean base (4 ticks, ~150 points) so the ladder can start below the
+    # knee of a slow projector; padding supplies the rest.
+    base = timing_test(ticks=4)
+    return {n: [pad_to(f, n) for f in base] for n in counts}
+
+
 if __name__ == '__main__':
     for fn, nm in ((cube, 'cube'), (lissajous, 'lissajous'),
-                   (starfield, 'starfield'), (timing_test, 'timing_test')):
+                   (starfield, 'starfield'), (text_reveal, 'psg'),
+                   (timing_test, 'timing_test')):
         fr = fn()
         n = ilda.write(f'{nm}.ild', fr, name=nm.upper()[:8], company='CLAUDE',
                        last_flag=True)
         pts = [len(x) for x in fr]
         print(f"{nm+'.ild':18s} {len(fr):3d} frames  "
               f"{min(pts)}-{max(pts)} pts/frame  {n} bytes")
+
+    print()
+    for count, fr in sorted(pointrate_ladder().items()):
+        nm = f'rate{count}'
+        ilda.write(f'{nm}.ild', fr, name=nm.upper()[:8], company='CLAUDE',
+                   last_flag=True)
+        print(f"{nm+'.ild':18s} {len(fr):3d} frames  "
+              f"{len(fr[0])} pts/frame  (ladder step)")
