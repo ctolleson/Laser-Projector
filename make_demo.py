@@ -599,19 +599,27 @@ def _raccoon_strokes():
         # Base sits clear of the head (its outline reaches x=32 after the
         # shift, cheek fur to x=44), so the tail sweeps out from behind rather
         # than across the face.
-        cx = 38 + 62 * t
-        cy = -50 + 52 * t + 28 * math.sin(math.pi * t)
+        cx = 38 + 68 * t
+        cy = -50 + 54 * t + 28 * math.sin(math.pi * t)
         # outward normal of the centreline, for the tapering width
-        dx, dy = 62.0, 52 + 28 * math.pi * math.cos(math.pi * t)
+        dx, dy = 68.0, 54 + 28 * math.pi * math.cos(math.pi * t)
         L = math.hypot(dx, dy)
-        w = 25 * (1 - 0.42 * t)
+        # Near-full width for most of the length, then a taper to a point over
+        # the last quarter. A constant taper leaves a blunt stump; a real tail
+        # carries its thickness and finishes in a tip.
+        shrink = 1.0 if t <= 0.74 else ((1.0 - t) / 0.26) ** 0.55
+        w = 25 * (1 - 0.18 * t) * shrink
         return (cx - dy / L * off * w, cy + dx / L * off * w)
 
-    n = 12
+    n = 16
     upper = [tail_pt(i / n, 0.5) for i in range(n + 1)]
     lower = [tail_pt(i / n, -0.5) for i in range(n + 1)]
     S.append((upper + lower[::-1] + [upper[0]], -12))          # tail outline
-    for t in (0.24, 0.44, 0.64, 0.84):                          # rings
+    for t in (0.20, 0.38, 0.56, 0.72, 0.85):                   # rings
+        S.append(([tail_pt(t, 0.5), tail_pt(t, -0.5)], -11))
+    # Raccoon tails finish in a dark tip. A single-colour laser cannot draw
+    # "dark", so hatch it instead -- the density reads as the marking.
+    for t in (0.90, 0.95):
         S.append(([tail_pt(t, 0.5), tail_pt(t, -0.5)], -11))
     return S
 
