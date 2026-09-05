@@ -345,10 +345,281 @@ def palette_chart(per_group=8, hold=40):
     return frames
 
 
+# ------------------------------------------------------- full text show -----
+def _place(lines, unit=None):
+    """Glyph strokes for stacked, centred lines, in projector units."""
+    text = [t.upper() for t in lines]
+    unit = unit or TEXT_W / max(sf.line_width(t) for t in text)
+    gap = unit * 9.5
+    y0 = gap * (len(text) - 1) / 2.0
+    out = []
+    for i, t in enumerate(text):
+        w = sf.line_width(t) * unit
+        oy = y0 - i * gap - unit * sf.CAP / 2.0
+        out.append([[(x * unit - w / 2.0, y * unit + oy) for x, y in s]
+                    for s in sf.strokes(t)])
+    return out
+
+
+def _persp(x, y, z):
+    k = FOCAL / (FOCAL + z)
+    return (x * k, y * k, z)
+
+
+# Each effect maps a line's 2D stroke to 3D for progress u in 0..1.
+# `li` is the line index, so effects can stagger down the block.
+
+def _fx_hold(pts, li, u):
+    return [(x, y, 0) for x, y in pts]
+
+
+def _fx_wave(pts, li, u, amp=2400, wavelen=26000.0, cycles=2.5):
+    k = 2 * math.pi / wavelen
+    ph = 2 * math.pi * u * cycles - li * 0.8
+    return [(x, y + amp * math.sin(x * k + ph), 0) for x, y in pts]
+
+
+def _fx_breathe(pts, li, u, cycles=2, a=0.17):
+    s = 1.0 + a * math.sin(2 * math.pi * u * cycles)
+    return [(x * s, y * s, 0) for x, y in pts]
+
+
+def _fx_spin_z(pts, li, u):
+    a = 2 * math.pi * u
+    c, s = math.cos(a), math.sin(a)
+    return [(x * c - y * s, x * s + y * c, 0) for x, y in pts]
+
+
+# Near edge-on a rotated line collapses to a single column (or row) -- on a
+# laser that is not "thin", it is every point of the line stacked into one
+# bright bar. These return None so the renderer drops the line entirely.
+# The test has to be on the ROTATION ANGLE, not on the resulting geometry:
+# a collapsed line and a legitimately vertical stroke (the stem of an I or L)
+# look identical once projected.
+EDGE_ON = 0.12
+
+
+def _fx_spin_y(pts, li, u, turns=1):
+    a = 2 * math.pi * u * turns - li * 0.55      # stagger: never all edge-on
+    ca, sa = math.cos(a), math.sin(a)
+    if abs(ca) < EDGE_ON:
+        return None
+    return [_persp(x * ca, y, x * sa) for x, y in pts]
+
+
+def _fx_flip_x(pts, li, u, turns=1):
+    a = 2 * math.pi * u * turns - li * 0.55
+    ca, sa = math.cos(a), math.sin(a)
+    if abs(ca) < EDGE_ON:
+        return None
+    return [_persp(x, y * ca, y * sa) for x, y in pts]
+
+
+def _fx_enter(pts, li, u):
+    """Swing in from edge-on, eased, staggered per line."""
+    p = min(1.0, max(0.0, u * 3.0 - li * 0.62))
+    a = math.pi / 2 * (1 - (1 - p) ** 3)
+    ca, sa = math.cos(a), math.sin(a)
+    if abs(ca) < EDGE_ON:
+        return None
+    return [_persp(x * ca, y, x * sa) for x, y in pts]
+
+
+def _fx_exit(pts, li, u):
+    p = min(1.0, max(0.0, u * 3.0 - (2 - li) * 0.62))
+    a = -math.pi / 2 * (1 - (1 - p) ** 3)
+    ca, sa = math.cos(a), math.sin(a)
+    if abs(ca) < EDGE_ON:
+        return None
+    return [_persp(x * ca, y, x * sa) for x, y in pts]
+
+
+def _write_on(geom, u):
+    """Reveal strokes in drawing order, cutting the last one mid-path."""
+    total = 0.0
+    lens = []
+    for line in geom:
+        for s in line:
+            L = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(s, s[1:]))
+            lens.append(L); total += L
+    want = total * u
+    out = [[] for _ in geom]
+    k = 0
+    for li, line in enumerate(geom):
+        for s in line:
+            L = lens[k]; k += 1
+            if want <= 0:
+                continue
+            if want >= L:
+                out[li].append(s); want -= L
+                continue
+            # partial stroke: walk the path until the budget runs out
+            acc = 0.0; part = [s[0]]
+            for a, b in zip(s, s[1:]):
+                seg = math.hypot(b[0] - a[0], b[1] - a[1])
+                if acc + seg <= want:
+                    part.append(b); acc += seg
+                else:
+                    f = (want - acc) / seg if seg else 0
+                    part.append((a[0] + (b[0] - a[0]) * f,
+                                 a[1] + (b[1] - a[1]) * f))
+                    break
+            if len(part) > 1:
+                out[li].append(part)
+            want = 0
+    return out
+
+
+def text_show(lines=('PRODUCT', 'SECURITY', 'GUILD'), colour=MAGENTA):
+    """A longer show: the text written on, then put through several effects.
+
+    Drawn in MAGENTA (index 48), one of the seven colours this projector
+    reproduces truly -- and the only saturated one that is neither a primary
+    nor washed out by its dim green.
+
+    Effects are stroke transforms, so none of them add points: the frame stays
+    at the same ~635-point cost throughout, and the refresh stays near 22 Hz.
+    The wave displaces whole glyphs rather than rippling within them, which is
+    what keeps it free -- bending a letter would need the strokes subdivided,
+    and every extra vertex is scan time this projector does not have.
+    """
+    geom = _place(lines)
+
+    # (effect, frames). Starts from nothing and ends at nothing, so it loops.
+    plan = [
+        ('write', 74), ('hold', 20),
+        ('wave', 104), ('hold', 12),
+        ('breathe', 68),
+        ('spin_y', 92), ('hold', 12),
+        ('flip_x', 88), ('hold', 12),
+        ('spin_z', 84), ('hold', 20),
+        ('exit', 44),
+    ]
+    fx = {'hold': _fx_hold, 'wave': _fx_wave, 'breathe': _fx_breathe,
+          'spin_z': _fx_spin_z, 'spin_y': _fx_spin_y, 'flip_x': _fx_flip_x,
+          'exit': _fx_exit}
+
+    frames = []
+    for name, n in plan:
+        for f in range(n):
+            u = f / n
+            fb = FrameBuilder(max_step=1700, dwell_start=3, dwell_end=2,
+                              dwell_blank=2)
+            src = _write_on(geom, u) if name == 'write' else geom
+            xf = _fx_hold if name == 'write' else fx[name]
+            for li, line in enumerate(src):
+                for s in line:
+                    p3 = xf(s, li, u)
+                    if p3 is None:
+                        continue                  # edge-on: would be a bar
+                    fb.polyline(p3, color=colour)
+            if not fb.pts:
+                fb.move_to(0, 0)
+            frames.append(fb.build())
+
+    # The exit ends past edge-on, so the tail draws nothing. Keep a short beat
+    # between repeats and drop the rest.
+    def draws(fr):
+        return any(not (p[3] & ilda.BLANK) for p in fr.points)
+
+    last = max(i for i, fr in enumerate(frames) if draws(fr))
+    return frames[:last + 5]
+
+
+# ---------------------------------------------------------- raccoon ---------
+def _ellipse(cx, cy, rx, ry, n, rot=0.0):
+    c, s = math.cos(rot), math.sin(rot)
+    out = []
+    for i in range(n + 1):
+        t = 2 * math.pi * i / n
+        x, y = rx * math.cos(t), ry * math.sin(t)
+        out.append((cx + x * c - y * s, cy + x * s + y * c))
+    return out
+
+
+def _arc_pts(cx, cy, rx, ry, a0, a1, n):
+    return [(cx + rx * math.cos(math.radians(a)), cy + ry * math.sin(math.radians(a)))
+            for a in (a0 + (a1 - a0) * i / n for i in range(n + 1))]
+
+
+def _raccoon_strokes():
+    """A raccoon face as (stroke, z) pairs, drawn in a -100..100 box.
+
+    Two things separate a raccoon from a cat, and both matter more than detail:
+    the ears are small and ROUND (pointed triangles read as feline instantly),
+    and the bandit mask is a single band that bridges across the nose rather
+    than two separate eye rings.
+
+    Features carry real depth. Under Y-axis rotation a flat drawing collapses
+    to one bright column at 90 degrees; a forward-set muzzle and nose turn that
+    into a readable profile instead, so the spin never blanks.
+    """
+    S = []
+    S.append((_ellipse(0, 4, 58, 46, 20), 0))                     # head
+    for sgn in (-1, 1):
+        # Ear bases sit ON the head outline (the ellipse passes through y=40
+        # at x=36); any higher and they read as detached horns.
+        S.append((_arc_pts(sgn * 36, 40, 19, 19, 175, 5, 9), -7))   # ear, round
+        S.append((_arc_pts(sgn * 36, 41, 10, 10, 172, 8, 6), -5))   # inner ear
+
+    # The mask: one band across both eyes, dipping at the bridge of the nose.
+    mask = [(-53, 16), (-48, 27), (-33, 33), (-16, 30), (-6, 22),
+            (0, 17), (6, 22), (16, 30), (33, 33), (48, 27), (53, 16),
+            (49, 5), (34, -3), (17, 0), (6, 6), (0, 8), (-6, 6),
+            (-17, 0), (-34, -3), (-49, 5), (-53, 16)]
+    S.append((mask, 6))
+    for sgn in (-1, 1):
+        S.append((_ellipse(sgn * 27, 15, 7.5, 7.5, 8), 9))         # eye
+
+    S.append((_ellipse(0, -26, 25, 17, 14), 12))                   # muzzle
+    S.append(([(-8, -13), (8, -13), (0, -23), (-8, -13)], 18))     # nose
+    S.append(([(0, -23), (0, -31)], 15))                           # philtrum
+    S.append(([(-13, -38), (-6, -31), (0, -31), (6, -31), (13, -38)], 14))
+    S.append(([(0, 50), (0, 32)], 2))                              # brow stripe
+    for sgn in (-1, 1):
+        S.append(([(sgn * 52, 8), (sgn * 66, 13)], 4))             # cheek fur
+        S.append(([(sgn * 55, -4), (sgn * 70, -4)], 4))
+        S.append(([(sgn * 21, -24), (sgn * 50, -20)], 10))         # whiskers
+        S.append(([(sgn * 21, -30), (sgn * 52, -33)], 10))
+    return S
+
+
+def raccoon(nframes=210, scale=235.0):
+    """A raccoon spinning about the vertical axis, cycling through colours.
+
+    Colour steps through ilda.SUPPORTED -- the seven indices this projector
+    actually reproduces. Cycling the full 64 would spend most of the loop on
+    gradient entries that all render as the same white.
+
+    nframes is 7 colours x 30 frames and exactly one revolution, so colour and
+    rotation both land together and the loop is seamless.
+    """
+    strokes = _raccoon_strokes()
+    per_colour = nframes // len(ilda.SUPPORTED)
+    frames = []
+    for f in range(nframes):
+        a = 2 * math.pi * f / nframes
+        ca, sa = math.cos(a), math.sin(a)
+        colour = ilda.SUPPORTED[(f // per_colour) % len(ilda.SUPPORTED)]
+        fb = FrameBuilder(max_step=1500, dwell_start=3, dwell_end=2,
+                          dwell_blank=2)
+        for pts, z0 in strokes:
+            p3 = []
+            for x, y in pts:
+                x3, z3 = x * scale, z0 * scale
+                xr = x3 * ca + z3 * sa
+                zr = -x3 * sa + z3 * ca
+                k = FOCAL / (FOCAL + zr * 0.55)
+                p3.append((xr * k, y * scale * k, zr))
+            fb.polyline(p3, color=colour)
+        frames.append(fb.build())
+    return frames
+
+
 if __name__ == '__main__':
     for fn, nm in ((cube, 'cube'), (lissajous, 'lissajous'),
-                   (starfield, 'starfield'), (text_reveal, 'psg'),
-                   (palette_chart, 'palette'),
+                   (starfield, 'starfield'), (text_show, 'psg'),
+                   (palette_chart, 'palette'), (raccoon, 'raccoon'),
                    (timing_test, 'timing_test')):
         fr = fn()
         n = ilda.write(f'{nm}.ild', fr, name=nm.upper()[:8], company='CLAUDE',
