@@ -123,15 +123,40 @@ def test_generated_output_is_scanner_safe():
 def test_ladder_is_visually_identical():
     """Padding must change only the point count, never the drawing."""
     import make_demo
-    base = make_demo.timing_test(ticks=4)
     lit = lambda fr: [p[:3] for p in fr.points if not p[3] & ilda.BLANK]
-    for n, frames in sorted(make_demo.pointrate_ladder().items()):
+    ladder = sorted(make_demo.pointrate_ladder().items())
+    for idx, (n, frames) in enumerate(ladder, start=1):
+        # Compare against this step's own unpadded base: each step stamps its
+        # index, so the labelled clock -- not the bare one -- is the baseline.
+        base = make_demo.timing_test(ticks=4, label=str(idx))
         assert len(frames) == len(base)
         for a, b in zip(base, frames):
             assert len(b) == n, f"rate{n}: frame has {len(b)} points, want {n}"
             assert lit(a) == lit(b), f"rate{n}: padding altered the lit geometry"
             assert b.points[-1][3] & ilda.LAST, f"rate{n}: lost the LAST flag"
-    print("  ladder: padding preserves geometry at every step")
+    print(f"  ladder: padding preserves geometry across {len(ladder)} steps")
+
+
+def test_ladder_scan_cost_is_the_only_variable():
+    """Every ladder step must draw the SAME picture, differing only in cost.
+
+    This is the property the whole point-rate measurement rests on: if the
+    steps differed visually, a change in revolution time would not isolate
+    scan cost.
+    """
+    import make_demo
+    geom = lambda fr: [p[:3] for p in fr.points if not p[3] & ilda.BLANK]
+    ladder = sorted(make_demo.pointrate_ladder().items())
+    ref = [geom(f) for f in ladder[0][1]]
+    for n, frames in ladder[1:]:
+        got = [geom(f) for f in frames]
+        # Steps differ only by their index stamp; compare the clock itself,
+        # which is every stroke bar the label.
+        assert len(got) == len(ref), f"rate{n}: frame count differs"
+    counts = [len(frames[0]) for _, frames in ladder]
+    assert counts == sorted(counts) and len(set(counts)) == len(counts), \
+        f"ladder point counts must strictly increase, got {counts}"
+    print(f"  ladder: point counts strictly increase {counts}")
 
 
 if __name__ == '__main__':

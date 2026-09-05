@@ -53,7 +53,7 @@ def lissajous(nframes=90, steps=180):
 
 
 # --------------------------------------------------------- timing test -------
-def timing_test(nframes=60, ticks=12):
+def timing_test(nframes=60, ticks=12, label=None):
     """A hand that makes exactly ONE revolution over 60 frames.
 
     Time one full revolution on the projector to decode field 2 of Picture.prg:
@@ -74,6 +74,13 @@ def timing_test(nframes=60, ticks=12):
         t = math.pi / 2 - 2 * math.pi * f / nframes
         fb.polyline([(0, 0), (R * 0.7 * math.cos(t), R * 0.7 * math.sin(t))],
                     color=WHITE)
+        if label:
+            # Ladder steps draw the same clock, so stamp an index -- otherwise
+            # you cannot tell which file is on the wall while timing it.
+            u = R * 0.09
+            for s in sf.strokes(label):
+                fb.polyline([(x * u - R * 0.92, y * u - R * 0.92)
+                             for x, y in s], color=RED)
         frames.append(fb.build())
     return frames
 
@@ -154,7 +161,8 @@ def starfield(nframes=120, nstars=36, seed=3):
 
 # ---------------------------------------------------------- text reveal -----
 def text_reveal(lines=('PRODUCT', 'SECURITY', 'GUILD'), nframes=148,
-                colour=CYAN, hold=54, spin_in=32, stagger=13, spin_out=30):
+                colour=CYAN, hold=54, spin_in=32, stagger=13, spin_out=30,
+                tail_beat=4):
     """Three stacked lines that rotate in about the vertical axis, hold, exit.
 
     Rotation is about Y, so a line at 90 degrees is edge-on and collapses to a
@@ -216,7 +224,16 @@ def text_reveal(lines=('PRODUCT', 'SECURITY', 'GUILD'), nframes=148,
         if not fb.pts:                 # every line edge-on: park the beam
             fb.move_to(0, 0)
         frames.append(fb.build())
-    return frames
+
+    # The edge-on skip means the reveal starts and ends with frames that draw
+    # nothing. Trailing blanks are dead air on a projector that loops, so keep
+    # only a short beat between repeats.
+    def draws(fr):
+        return any(not (p[3] & ilda.BLANK) for p in fr.points)
+
+    first = next(i for i, fr in enumerate(frames) if draws(fr))
+    last = max(i for i, fr in enumerate(frames) if draws(fr))
+    return frames[first:last + 1 + tail_beat]
 
 
 # ------------------------------------------------- point-rate measurement ----
@@ -250,10 +267,13 @@ def pointrate_ladder(counts=(400, 800, 1600, 3200, 6400)):
 
     measured on any file past the knee.
     """
-    # A lean base (4 ticks, ~150 points) so the ladder can start below the
+    # A lean base (4 ticks, ~200 points) so the ladder can start below the
     # knee of a slow projector; padding supplies the rest.
-    base = timing_test(ticks=4)
-    return {n: [pad_to(f, n) for f in base] for n in counts}
+    out = {}
+    for idx, n in enumerate(sorted(counts), start=1):
+        base = timing_test(ticks=4, label=str(idx))
+        out[n] = [pad_to(f, n) for f in base]
+    return out
 
 
 if __name__ == '__main__':
